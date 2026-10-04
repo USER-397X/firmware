@@ -220,6 +220,11 @@ void render() {
   unsigned long now = millis();
   bead.clear();
 
+  if (drawAnim(now)) {                      // an animation is playing: it owns the LEDs
+    bead.show();
+    return;
+  }
+
   if (mode == M_IDLE) {
     float b = 0.5f + 0.5f * sinf(now / 400.0f);
     uint8_t v = 15 + (uint8_t)(60 * b);
@@ -250,49 +255,80 @@ void render() {
   bead.show();
 }
 
-// Wave running across the sphere, starting at point c
-void wave(V3 c, int stars) {
-  for (int r = 0; r <= 230; r += 12) {
-    bead.clear();
-    for (int leg = 0; leg < bead.nlegs; leg++) {
-      for (int pix = 0; pix <= bead.nsections; pix++) {
-        BlochVector d(bead.theta_quant * (float)pix, bead.phi_quant * (float)leg);
-        float a = angleBetween(c, mk(d.x, d.y, d.z));
-        if (a <= r && a > r - 50) {
-          uint32_t col;
-          if (stars >= 3)       col = colorWheel_deg(fmodf(a * 2.0f + r * 2.0f, 360.0f));
-          else if (stars == 2)  col = color(255, 170, 40);
-          else                  col = WHITE;
-          bead.setLegPixelColor(leg, pix, col);
-        }
+// One frame of a wave running across the sphere from point c: a ring at distance r degrees.
+void drawWave(V3 c, int stars, int r) {
+  for (int leg = 0; leg < bead.nlegs; leg++) {
+    for (int pix = 0; pix <= bead.nsections; pix++) {
+      BlochVector d(bead.theta_quant * (float)pix, bead.phi_quant * (float)leg);
+      float a = angleBetween(c, mk(d.x, d.y, d.z));
+      if (a <= r && a > r - 50) {
+        uint32_t col;
+        if (stars >= 3)       col = colorWheel_deg(fmodf(a * 2.0f + r * 2.0f, 360.0f));
+        else if (stars == 2)  col = color(255, 170, 40);
+        else                  col = WHITE;
+        bead.setLegPixelColor(leg, pix, col);
       }
     }
-    bead.show();
-    delay(40);
   }
 }
 
-void celebrate(int stars) {
-  V3 c = hasTarget ? target : state;
-  wave(c, stars);
-  if (stars >= 3) {                       // rainbow flashes for par
-    for (int k = 0; k < 2; k++) {
-      for (int leg = 0; leg < bead.nlegs; leg++)
-        for (int pix = 0; pix <= bead.nsections; pix++)
-          bead.setLegPixelColor(leg, pix, colorWheel_deg(fmodf(leg * 30.0f + k * 90.0f, 360.0f)));
-      bead.show(); delay(180);
-      bead.clear(); bead.show(); delay(120);
+void fillAll(uint32_t (*colorOf)(int leg, int k), int k) {
+  for (int leg = 0; leg < bead.nlegs; leg++)
+    for (int pix = 0; pix <= bead.nsections; pix++)
+      bead.setLegPixelColor(leg, pix, colorOf(leg, k));
+}
+uint32_t rainbowColor(int leg, int k) { return colorWheel_deg(fmodf(leg * 30.0f + k * 90.0f, 360.0f)); }
+uint32_t greyColor(int, int)          { return color(40, 40, 40); }
+
+// ---------------- Animations ----------------
+// Short light shows (victory, gate done, measurement) are not played with delay(): that would
+// stall the motion sensor, taps and Bluetooth. Instead an animation is started here and
+// render() draws the right frame for the time that has passed, on every loop iteration.
+enum AnimKind { A_NONE, A_WAVE, A_CELEBRATE, A_GATE_DONE, A_MEASURE };   // A_WAVE: wave only
+
+const unsigned long WAVE_STEP_MS  = 40;    // one ring of the victory wave
+const int           WAVE_STEPS    = 20;    // rings at 0, 12, ..., 228 degrees
+const unsigned long RAINBOW_ON_MS = 180;   // rainbow flash for hitting par ...
+const unsigned long RAINBOW_MS    = 300;   // ... followed by darkness, twice
+const unsigned long DONE_MS       = 120;   // white flash when a gate snaps in
+const unsigned long MEAS_GREY_MS  = 120;   // measurement: grey flash ...
+const unsigned long MEAS_MS       = 470;   // ... then the result pole in white
+
+struct Anim { AnimKind kind; unsigned long start; V3 c; int stars; };
+Anim anim = {A_NONE, 0, {0, 0, 1}, 0};
+
+void startAnim(AnimKind kind, V3 c, int stars = 0) { anim = {kind, millis(), c, stars}; }
+
+// Draws the current animation frame (on a cleared bead) and returns true while one is playing.
+bool drawAnim(unsigned long now) {
+  unsigned long t = now - anim.start;
+  switch (anim.kind) {
+    case A_WAVE:
+    case A_CELEBRATE: {
+      unsigned long waveMs = WAVE_STEP_MS * WAVE_STEPS;
+      if (t < waveMs) { drawWave(anim.c, anim.stars, (t / WAVE_STEP_MS) * 12); return true; }
+      t -= waveMs;
+      if (anim.kind == A_CELEBRATE && anim.stars >= 3 && t < 2 * RAINBOW_MS) {
+        if (t % RAINBOW_MS < RAINBOW_ON_MS) fillAll(rainbowColor, t / RAINBOW_MS);
+        return true;
+      }
+      break;
     }
+    case A_GATE_DONE:
+      if (t < DONE_MS) { drawV(anim.c, WHITE); return true; }
+      break;
+    case A_MEASURE:
+      if (t < MEAS_GREY_MS) { fillAll(greyColor, 0); return true; }
+      if (t < MEAS_MS)      { drawV(anim.c, WHITE); return true; }
+      break;
+    default:
+      return false;
   }
-  bead.clear(); bead.show();
+  anim.kind = A_NONE;
+  return false;
 }
 
-void flashDone(V3 v) {
-  bead.clear();
-  drawV(v, WHITE);
-  bead.show();
-  delay(120);
-}
+void celebrate(int stars) { startAnim(A_CELEBRATE, hasTarget ? target : state, stars); }
 
 // ---------------- Gate logic ----------------
 void armGate(int idx) {
@@ -311,7 +347,7 @@ void completeGate() {
   const GateDef &G = GATES[armed];
   state = snapToAxes(rotv(armStart, G.n, G.ang));   // exact gate result
   armed = -1;
-  flashDone(state);
+  startAnim(A_GATE_DONE, state);
   out(String("DONE ") + G.name + " " + vecStr(state, 4));
 }
 
@@ -365,12 +401,7 @@ void measure() {
   state = bit ? mk(0, 0, -1) : mk(0, 0, 1);
 
   // short animation: flash, then the result pole lights up
-  for (int leg = 0; leg < bead.nlegs; leg++)
-    for (int pix = 0; pix <= bead.nsections; pix++)
-      bead.setLegPixelColor(leg, pix, color(40, 40, 40));
-  bead.show(); delay(120);
-  bead.clear(); drawV(state, WHITE); bead.show(); delay(350);
-
+  startAnim(A_MEASURE, state);
   out(String("MEAS ") + bit + " " + vecStr(state, 4));
 }
 
@@ -528,9 +559,8 @@ void setup() {
 
   tanTol = tanf(AXIS_TOL_DEG * DEG_TO_RAD);
   randomSeed(micros());
-  wave(mk(0, 0, 1), 3);             // short start-up animation
-  bead.clear(); bead.show();
-  bead.wasTapped();                 // discard taps from handling during start-up
+  startAnim(A_WAVE, mk(0, 0, 1), 3);        // short start-up wave
+  bead.wasTapped();                         // discard taps from handling during start-up
   printReady();
 }
 
