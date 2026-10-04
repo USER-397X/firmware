@@ -18,6 +18,7 @@ examples/
   BLE_bridge/        # Hybrid: IMU broadcast + BLE control
   Dynamical_Decoupling/  # Quantum decoherence simulation game
   Tap_to_Measure/    # Quantum measurement collapse simulation
+  Gate_Trainer/      # Apply quantum gates by rolling the bead (with the gate trainer web page)
 ```
 
 ## Key Classes

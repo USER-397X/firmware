@@ -1,66 +1,71 @@
-// ============================================================
-//  Qbead Gate Trainer  ·  Firmware v3  (Bluetooth + USB)
-// ------------------------------------------------------------
-//  One firmware for both modes of the web app (QbeadGateTrainer.html):
+// # Gate Trainer
 //
-//   FREE PLAY  - apply any gate (X, Y, Z, H, S, S-dagger, T), reset to |0>,
-//                measure in the Z basis.
-//   GATE GOLF  - levels with start state, target state, allowed gates
-//                and par. Measuring is disabled here.
+// In this sketch the Qbead holds the state of a qubit and applies quantum gates
+// physically: you roll the bead about a gate's rotation axis, and the state turns
+// with it. A web page (the Quantum Gates lesson on the qbead website, or the gate
+// trainer app) picks which gate is armed and shows the state on a Bloch sphere.
 //
-//  The bead holds the qubit state and executes gates PHYSICALLY.
-//  The web app chooses the mode, the level and which gate is armed.
+// The page offers two modes:
 //
-//  Connection: Bluetooth (Nordic UART service) or USB cable, same
-//  text protocol. The bead does NOT wait for a serial monitor, so it
-//  also runs on battery. (For USB: close the Arduino Serial Monitor.)
+// - **Free play**: apply any gate (X, Y, Z, H, S, S-dagger, T), reset to |0>, and
+//   measure in the Z basis.
+// - **Gate Golf**: reach a target state from a start state with only a few allowed
+//   gates, in as few gates as possible. Measuring is disabled here.
 //
-//  How a gate is executed:
-//   - Click a gate in the web app -> it is "armed".
-//   - The two ends of its rotation axis light up ORANGE.
-//   - Hold the bead so the orange axis is roughly HORIZONTAL and roll
-//     the bead around that axis. The blue dot stays "up" in the room
-//     while the sphere turns underneath it.
-//   - After the full rotation (180 deg for X/Y/Z/H, 90 for S and S-dagger,
-//     45 for T) the gate snaps in.
-//   - Orange blinking = axis is too vertical, tilt the bead first.
-//   - Dot turns RED   = you are rolling around the wrong axis.
+// The page and the bead talk over Bluetooth (the Nordic UART service) or a USB
+// cable, with the same text protocol. The bead does not wait for a serial monitor,
+// so it also runs on battery. (Over USB, close the Arduino Serial Monitor first.)
 //
-//  Taps on the bead:
-//   - single tap = measure in the Z basis (free play only, no gate armed)
-//   - double tap = show the reference axes for a moment
-//       RED  = x-z meridian (path of the Y gate)
-//       BLUE = y-z meridian (path of the X gate)
+// ### Applying a gate
 //
-//  Colours:  BLUE = current state, GREEN = target (or where the armed
-//            gate will take you), ORANGE = rotation axis of the armed gate.
+// - Pick a gate on the page: it is "armed" and the two ends of its rotation axis
+//   light up orange.
+// - Hold the bead so the orange axis is roughly horizontal and roll the bead around
+//   it. The blue dot stays "up" in the room while the sphere turns underneath it.
+// - After the full rotation (180 degrees for X, Y, Z and H, 90 for S and S-dagger,
+//   45 for T) the gate snaps in.
+// - Orange blinking means the axis is too vertical: tilt the bead first.
+//   A red dot means you are rolling around the wrong axis.
 //
-//  Commands (one per line, also typeable in the Serial Monitor):
-//    HELLO                     -> bead answers READY
-//    LEVEL sx sy sz            -> free play, start state (Bloch vector)
-//    LEVEL sx sy sz tx ty tz   -> gate golf, start + target
-//    SET x y z                 -> set the state (e.g. INIT: SET 0 0 1)
-//    ARM X|Y|Z|H|S|D|T         -> arm a gate (D = S-dagger)
-//    CANCEL                    -> cancel the armed gate
-//    MEASURE                   -> measure in the Z basis (free play)
-//    AXES                      -> show the reference axes
-//    WIN n                     -> victory animation with n stars
-//    IDLE                      -> waiting mode
-//    BRIGHT n                  -> brightness 0..255
+// Tapping the bead once measures in the Z basis (free play, no gate armed).
+// A double tap shows the reference axes for a moment: red is the x-z meridian
+// (the path of the Y gate), blue the y-z meridian (the path of the X gate).
 //
-//  Output:
-//    READY ...                 -> ready
-//    S x y z p g o v           -> status (~15 times per second): state,
-//                                 progress 0..1, armed gate ('-' = none),
-//                                 wrong axis 0/1, axis too vertical 0/1
-//    DONE G x y z              -> gate G finished, new state
-//    MEAS b x y z              -> measured bit b (0/1), new state
-//    TAP n                     -> tap that did not measure (n = 1 or 2)
-// ============================================================
-
+// Colours: blue is the current state, green the target (or, in free play, where the
+// armed gate will take you), orange the rotation axis of the armed gate.
+//
+// ### Protocol
+//
+// One command or message per line. Commands can also be typed in the Serial Monitor.
+//
+// | Command | Meaning |
+// |---|---|
+// | `HELLO` | the bead answers `READY` |
+// | `LEVEL sx sy sz` | free play, start state (Bloch vector) |
+// | `LEVEL sx sy sz tx ty tz` | Gate Golf, start and target state |
+// | `SET x y z` | set the state (e.g. reset: `SET 0 0 1`) |
+// | `ARM X`, `Y`, `Z`, `H`, `S`, `D` or `T` | arm a gate (`D` is S-dagger) |
+// | `CANCEL` | cancel the armed gate |
+// | `MEASURE` | measure in the Z basis (free play) |
+// | `AXES` | show the reference axes |
+// | `WIN n` | victory animation with n stars |
+// | `IDLE` | waiting mode |
+// | `BRIGHT n` | brightness 0 to 255 |
+//
+// | Message | Meaning |
+// |---|---|
+// | `READY ...` | ready |
+// | `S x y z p g o v` | status, about 15 times per second: state, progress 0 to 1, armed gate (`-` for none), wrong axis 0/1, axis too vertical 0/1 |
+// | `DONE G x y z` | gate G finished, new state |
+// | `MEAS b x y z` | measured bit b (0 or 1), new state |
+// | `TAP n` | a tap that did not measure (n = 1 or 2) |
+//
+// ## Libraries and types
+//
+// First we include the Qbead library.
 #include <Qbead.h>
 
-// ---------------- Types ----------------
+// Custom types:
 // All custom types must be defined BEFORE the first function, because the
 // Arduino IDE inserts automatic function prototypes at that point.
 struct V3 { float x, y, z; };
@@ -70,7 +75,9 @@ struct GateDef { char name; V3 n; float ang; };
 Qbead::Qbead bead;
 BLEUart bleuart;   // Nordic UART service: text over Bluetooth
 
-// ---------------- Settings ----------------
+// ## Settings
+//
+// Tuning constants: how forgiving the gate detection is, and how often the bead reports its state.
 const char          BLE_NAME[]    = "qbead trainer";
 const uint8_t       BRIGHT        = 30;     // LED brightness
 const float         DONE_TOL_DEG  = 12.0;   // gate snaps in this many degrees before the end
@@ -83,7 +90,9 @@ const unsigned long DOUBLE_TAP_MS = 400;    // second tap within this time = dou
 const unsigned long TAP_DEBOUNCE  = 80;     // ignore tap echoes shorter than this
 const unsigned long AXES_SHOW_MS  = 1500;   // how long the reference axes are shown
 
-// ---------------- Colours ----------------
+// ## Colours
+//
+// The colours used on the bead.
 uint32_t BLUE   = color(0,   90, 255);
 uint32_t GREEN  = color(0,  255,  40);
 uint32_t ORANGE = color(255, 100,  0);
@@ -92,7 +101,9 @@ uint32_t WHITE  = color(255, 255, 255);
 uint32_t AX_RED  = color(120,   0,  0);   // reference axes, dimmer so dots stay visible
 uint32_t AX_BLUE = color(0,    30, 140);
 
-// ---------------- Small vector maths ----------------
+// ## Small vector maths
+//
+// Bloch vectors are 3D vectors, so a few helpers for adding, scaling and rotating them.
 static inline V3    mk(float x, float y, float z) { V3 r = {x, y, z}; return r; }
 static inline float dotp(V3 a, V3 b)   { return a.x*b.x + a.y*b.y + a.z*b.z; }
 static inline V3    crossp(V3 a, V3 b) { return mk(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
@@ -120,7 +131,9 @@ static V3 snapToAxes(V3 v) {
   return v;
 }
 
-// ---------------- Gates: rotation axis + angle ----------------
+// ## Gates
+//
+// Every gate is a rotation of the Bloch sphere: an axis and an angle in degrees.
 const float R2 = 0.70710678f;
 GateDef GATES[] = {
   {'X', {1, 0, 0},   180},
@@ -133,7 +146,9 @@ GateDef GATES[] = {
 };
 const int NGATES = sizeof(GATES) / sizeof(GATES[0]);
 
-// ---------------- State ----------------
+// ## State
+//
+// Everything the bead remembers between loop iterations.
 enum Mode { M_IDLE, M_PLAY };
 Mode mode = M_IDLE;
 
@@ -162,7 +177,7 @@ unsigned long lastTapAt = 0;
 LineBuf usbLine = {{0}, 0};
 LineBuf bleLine = {{0}, 0};
 
-// ---------------- Output to USB and Bluetooth ----------------
+// ## Output to USB and Bluetooth
 bool bleReady() { return Bluefruit.connected() && bleuart.notifyEnabled(); }
 
 void out(const String &line) {
@@ -181,7 +196,9 @@ void out(const String &line) {
 
 String vecStr(V3 v, int d) { return String(v.x, d) + " " + String(v.y, d) + " " + String(v.z, d); }
 
-// ---------------- Display ----------------
+// ## Display
+//
+// Drawing states and axes on the LEDs. `render()` is called on every loop iteration and redraws the whole bead.
 void drawV(V3 v, uint32_t c) {
   BlochVector b(v.x, v.y, v.z);
   bead.setBloch_deg(b.theta, b.phi, c);
@@ -280,7 +297,7 @@ void fillAll(uint32_t (*colorOf)(int leg, int k), int k) {
 uint32_t rainbowColor(int leg, int k) { return colorWheel_deg(fmodf(leg * 30.0f + k * 90.0f, 360.0f)); }
 uint32_t greyColor(int, int)          { return color(40, 40, 40); }
 
-// ---------------- Animations ----------------
+// ## Animations
 // Short light shows (victory, gate done, measurement) are not played with delay(): that would
 // stall the motion sensor, taps and Bluetooth. Instead an animation is started here and
 // render() draws the right frame for the time that has passed, on every loop iteration.
@@ -330,7 +347,9 @@ bool drawAnim(unsigned long now) {
 
 void celebrate(int stars) { startAnim(A_CELEBRATE, hasTarget ? target : state, stars); }
 
-// ---------------- Gate logic ----------------
+// ## Gate logic
+//
+// Arming a gate, and following the bead's motion until the gate snaps in.
 void armGate(int idx) {
   if (armed >= 0) state = armStart;   // another gate was armed -> reset it
   armed = idx;
@@ -389,7 +408,9 @@ void updateArmed(V3 g) {
   if (fabsf(beta) >= G.ang - DONE_TOL_DEG) completeGate();
 }
 
-// ---------------- Measurement ----------------
+// ## Measurement
+//
+// A measurement in the Z basis collapses the state to |0> or |1>, with the probabilities the state predicts.
 // Z-basis measurement: |0> with probability (1 + z) / 2, then the state collapses.
 bool canMeasure() { return mode == M_PLAY && !hasTarget && armed < 0; }
 
@@ -405,7 +426,7 @@ void measure() {
   out(String("MEAS ") + bit + " " + vecStr(state, 4));
 }
 
-// ---------------- Taps ----------------
+// ## Taps
 // The IMU reports single taps; double taps are recognised by timing.
 void onTap() {
   unsigned long now = millis();
@@ -428,7 +449,9 @@ void checkPendingTap() {
   else out("TAP 1");
 }
 
-// ---------------- Communication ----------------
+// ## Communication
+//
+// Commands arrive line by line, from USB or Bluetooth, and are handled the same way.
 void printReady() { out("READY qbead-trainer 3"); }
 
 void sendStatus() {
@@ -514,7 +537,7 @@ void pollInput() {
   while (bleuart.available()) feed(bleLine, (char)bleuart.read());
 }
 
-// ---------------- Bluetooth setup ----------------
+// ## Bluetooth setup
 void setupBLE() {
   // Larger MTU and notification queue, so ~15 status lines per second get through.
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
@@ -544,7 +567,9 @@ void setupBLE() {
   Bluefruit.Advertising.start(0);
 }
 
-// ---------------- Arduino ----------------
+// ## Setup and event loop
+//
+// `setup()` runs once at power-on. `loop()` then runs over and over: read the motion sensor, handle commands and taps, follow an armed gate, redraw the bead and report the state.
 void setup() {
   // Our own start-up instead of bead.begin(): bead.begin() blocks until a
   // serial monitor is open, which would make Bluetooth-only use impossible.
